@@ -3,20 +3,17 @@ import WebGL from "three/addons/capabilities/WebGL.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GUI } from "dat.gui";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-
+import * as CANNON from "cannon-es";
 // SETUP
 const scene = new THREE.Scene();
-
+scene.background = new THREE.Color(0x87ceeb);
 const camera = new THREE.PerspectiveCamera(
   45,
   window.innerWidth / window.innerHeight,
   0.1,
   1000
 );
-camera.position.y = 5;
-camera.position.z = 5;
-camera.position.x = 0;
-
+camera.position.set(0, 1, 1);
 const renderer = new THREE.WebGL1Renderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
@@ -28,11 +25,110 @@ control.maxDistance = 15;
 control.enablePan = false;
 control.maxPolarAngle = Math.PI / 2 - 0.05;
 control.update();
-//controls.addEventListener("change", () => renderer.render(scene, camera)); //this line is unnecessary if you are re-rendering within the animation loop
 
-// LIGHT
-const light = new THREE.AmbientLight(0xffffff, 0.7);
+//Ambient
+const light = new THREE.AmbientLight("#FFFFFF"); // soft white light
 scene.add(light);
+
+// SPOT LIGHT
+const spotLight = new THREE.SpotLight(0xffffff);
+scene.add(spotLight);
+spotLight.position.set(0, 8, 2);
+spotLight.intensity = 1.2;
+spotLight.angle = 0.45;
+spotLight.penumbra = 0.3;
+spotLight.castShadow = true;
+
+spotLight.shadow.mapSize.width = 1024;
+spotLight.shadow.mapSize.height = 1024;
+spotLight.shadow.camera.near = 5;
+spotLight.shadow.camera.far = 10;
+spotLight.shadow.focus = 1;
+
+//Sphere
+const sphereGeo = new THREE.SphereGeometry(2);
+const sphereMat = new THREE.MeshBasicMaterial({
+  color: 0xff0000,
+  wireframe: true,
+});
+const sphereMesh = new THREE.Mesh(sphereGeo, sphereMat);
+scene.add(sphereMesh);
+
+//Plane
+const planeGeo = new THREE.PlaneGeometry(10, 10);
+const planeMat = new THREE.MeshPhongMaterial({
+  color: 0xffffff,
+});
+const plane = new THREE.Mesh(planeGeo, planeMat);
+scene.add(plane);
+
+scene.add(new THREE.GridHelper(10, 10));
+
+//Cube
+const geometry = new THREE.BoxGeometry(1, 1, 1);
+const material = new THREE.MeshBasicMaterial({
+  color: 808080,
+  wireframe: true,
+});
+const cube = new THREE.Mesh(geometry, material);
+scene.add(cube);
+
+//GRAVITY CANNON
+const world = new CANNON.World({
+  gravity: new CANNON.Vec3(0, -9.81, 0),
+});
+
+const timeStep = 1 / 60;
+
+const groundPhysMat = new CANNON.Material();
+
+const planeBody = new CANNON.Body({
+  // shape: new CANNON.Plane(),
+  shape: new CANNON.Box(new CANNON.Vec3(5, 5, 0.1)),
+  type: CANNON.Body.STATIC,
+  material: groundPhysMat,
+  // mass: 10,
+});
+world.addBody(planeBody);
+planeBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+
+const boxBody = new CANNON.Body({
+  mass: 1,
+  shape: new CANNON.Box(new CANNON.Vec3(0.5, 0.5, 0.5)),
+  position: new CANNON.Vec3(4, 20, 0),
+});
+world.addBody(boxBody);
+
+const boxdPhysMat = new CANNON.Material();
+
+boxBody.angularVelocity.set(0, 10, 0);
+boxBody.angularDamping = 0.5;
+
+const groundBoxContactMat = new CANNON.ContactMaterial(
+  groundPhysMat,
+  boxdPhysMat,
+  { friction: 0.04 }
+);
+world.addContactMaterial(groundBoxContactMat);
+
+const spherePhysMat = new CANNON.Material();
+
+const sphereBody = new CANNON.Body({
+  mass: 10,
+  shape: new CANNON.Sphere(2),
+  position: new CANNON.Vec3(0, 15, 0),
+  material: spherePhysMat,
+});
+world.addBody(sphereBody);
+
+sphereBody.linearDamping = 0.31;
+
+const groundSphereContactMat = new CANNON.ContactMaterial(
+  groundPhysMat,
+  spherePhysMat,
+  { restitution: 0.9 }
+);
+world.addContactMaterial(groundSphereContactMat);
 
 // RENDER MODELS
 const gltfLoader = new GLTFLoader();
@@ -167,7 +263,7 @@ class CharacterControl {
 
     // update camera target
     this.cameraTarget.x = this.model.position.x;
-    this.cameraTarget.y = this.model.position.y + 1;
+    this.cameraTarget.y = this.model.position.y;
     this.cameraTarget.z = this.model.position.z;
     this.orbitControl.target = this.cameraTarget;
   }
@@ -198,18 +294,6 @@ class CharacterControl {
     return directionOffset;
   }
 }
-
-const plane = new THREE.Mesh(
-  new THREE.PlaneGeometry(10, 10),
-  new THREE.MeshBasicMaterial({
-    color: "#616161",
-    side: THREE.DoubleSide,
-  })
-);
-plane.rotation.x = -Math.PI / 2;
-scene.add(plane);
-
-scene.add(new THREE.GridHelper(10, 30));
 
 // FUNCTION HANDLER
 const keysPressed = {};
@@ -291,9 +375,19 @@ function animate() {
   if (characterControl) {
     characterControl.update(clock.getDelta(), keysPressed);
   }
+  world.step(timeStep);
+  plane.position.copy(planeBody.position);
+  plane.quaternion.copy(planeBody.quaternion);
+
+  cube.position.copy(boxBody.position);
+  cube.quaternion.copy(boxBody.quaternion);
+
+  sphereMesh.position.copy(sphereBody.position);
+  sphereMesh.quaternion.copy(sphereBody.quaternion);
 
   control.update();
   renderer.setPixelRatio(window.devicePixelRatio);
+
   renderer.render(scene, camera);
 }
 
